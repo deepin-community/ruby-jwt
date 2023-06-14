@@ -1,0 +1,37 @@
+Description: remove 'pending' from tests passing with a newer version of openssl 3
+ the pending tag was added due to a regression in earlier version with empty keys
+Forwarded: not needed
+Author: Cédric Boutillier <boutil@debian.org>
+Last-Update: 2022-11-30
+
+--- a/spec/integration/readme_examples_spec.rb
++++ b/spec/integration/readme_examples_spec.rb
+@@ -29,7 +29,7 @@
+     end
+ 
+     it 'decodes with HMAC algorithm without secret key' do
+-      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
++      #pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
+       token = JWT.encode payload, nil, 'HS256'
+       decoded_token = JWT.decode token, nil, false
+ 
+--- a/spec/jwt_spec.rb
++++ b/spec/jwt_spec.rb
+@@ -629,7 +629,7 @@
+ 
+   context 'when hmac algorithm is used without secret key' do
+     it 'encodes payload' do
+-      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
++      #pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
+       payload = { a: 1, b: 'b' }
+ 
+       token = JWT.encode(payload, '', 'HS256')
+@@ -760,7 +760,7 @@
+   describe 'when token signed with nil and decoded with nil' do
+     let(:no_key_token) { ::JWT.encode(payload, nil, 'HS512') }
+     it 'raises JWT::DecodeError' do
+-      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
++      #pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
+       expect { ::JWT.decode(no_key_token, nil, true, algorithms: 'HS512') }.to raise_error(JWT::DecodeError, 'No verification key available')
+     end
+   end

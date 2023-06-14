@@ -1,5 +1,168 @@
-template-repository (1.0-1) unstable; urgency=medium
+ruby-jwt (2.5.0-1) unstable; urgency=medium
 
-  * Initial release
+  * Team upload
 
- -- Tsic404 <liuheng@deepin.org>  Sat, 28 Jan 2023 13:46:49 +0800
+  [ Debian Janitor ]
+  * Remove constraints unnecessary since buster:
+    + ruby-jwt: Drop versioned constraint on ruby-oauth2 in Breaks.
+
+  [ Cédric Boutillier ]
+  * New upstream version 2.5.0
+    - Add support for OpenSSL 3.0 (Closes: #1011711)
+  * Install README as docs
+  * watch file follows tags
+  * Drop 0001-Fix-openssl-gem-version-check-to-support-versons-gre.patch
+  * Add patch to remove pending tag from passing tests with newer openssl 3.0
+  * Bump Standards-Version to 4.6.1 (no changes needed)
+
+ -- Cédric Boutillier <boutil@debian.org>  Thu, 01 Dec 2022 05:01:50 +0100
+
+ruby-jwt (2.3.0-1) unstable; urgency=medium
+
+  * Team upload
+
+  [ Antonio Terceiro ]
+  * New upstream version 2.3.0
+  * Drop all patches (not needed anymore)
+  * Add upstream patch to fix openssl version check (Closes: #1005426)
+  * Build-Depends: add ruby-simplecov to avoid a patch
+  * Bump Standards-Version to 4.6.0; no changes needed
+  * debian/ruby-tests.rake: update from template
+  * debian/rules: update from template.
+    Install using rubygems layout
+  * debian/upstream/metadata: update from template
+  * debian/control: update from template
+
+ -- Antonio Terceiro <terceiro@debian.org>  Wed, 23 Feb 2022 21:37:45 -0300
+
+ruby-jwt (2.2.2-1) unstable; urgency=medium
+
+  * Team upload
+
+  [ Debian Janitor ]
+  * Set field Upstream-Contact in debian/copyright.
+  * Remove obsolete fields Contact, Name from debian/upstream/metadata
+    (already present in machine-readable debian/copyright).
+  * Update standards version to 4.5.0, no changes needed.
+  * Apply multi-arch hints.
+    + ruby-jwt: Add :all qualifier for ruby dependency.
+
+  [ Cédric Boutillier ]
+  * Update team name
+  * Add .gitattributes to keep unwanted files out of the source package
+
+  [ Sergio de Almeida Cipriano Junior ]
+  * New upstream version 2.2.2
+  * d/control:
+    - Bump debhelper-compat to 13
+    - Bump Standards-Version to 4.5.1
+  * d/patches:
+    - Add "Forwarded: no" in patch 0001 and 0002
+  * d/rules: remove debian/ruby-jwt/usr/bin/
+
+ -- Sergio de Almeida Cipriano Junior <sergiosacj@hotmail.com.br>  Tue, 19 Jan 2021 20:28:43 -0300
+
+ruby-jwt (2.1.0-2) unstable; urgency=medium
+
+  [ Pirate Praveen ]
+  * Reupload to unstable
+  * Add Breaks for ruby-oauth2 < 1.4.1
+  * Add Breaks: ruby-omniauth-azure-oauth2 (<< 0.0.10~)
+  * Add Breaks: ruby-googleauth (<< 0.6~)
+  * Bump Standards-Version to 4.4.1 (no changes needed)
+  * Drop compat file, rely on debhelper-compat and bump compat level to 12
+
+  [ Utkarsh Gupta ]
+  * New upstream version 2.2.1
+  * Add salsa-ci.yml
+  * Fix d/watch
+  * Fix package wrt cme
+  * Add d/upstream/metadata
+
+ -- Pirate Praveen <praveen@debian.org>  Sat, 16 Nov 2019 23:27:18 +0530
+
+ruby-jwt (2.1.0-1) experimental; urgency=medium
+
+  * New upstream version 2.1.0
+  * Bump debhelper compatibility level to 11
+  * Bump Standards-Version to 4.3.0 (no changes needed)
+  * Move debian/watch to gemwatch.debian.net
+  * Refresh patches
+  * Add ruby-rbnacl as build dependency
+  * Add require 'rbnacl' to spec_helper.rb
+  * Use salsa.debian.org in Vcs-* fields
+
+ -- Pirate Praveen <praveen@debian.org>  Tue, 05 Feb 2019 19:11:59 +0530
+
+ruby-jwt (1.5.6-1) unstable; urgency=medium
+
+  * Team upload
+  * New upstream releaase
+
+ -- Pirate Praveen <praveen@debian.org>  Fri, 18 Aug 2017 20:32:57 +0530
+
+ruby-jwt (1.5.4-1) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Cédric Boutillier ]
+  * Bump debhelper compatibility level to 9
+  * Remove version in the gem2deb build-dependency
+  * Use https:// in Vcs-* fields
+  * Use https:// in Vcs-* fields
+  * Bump Standards-Version to 3.9.7 (no changes needed)
+  * Run wrap-and-sort on packaging files
+
+  [ Lucas Kanashiro ]
+  * Imported Upstream version 1.5.4
+  * debian/rules: export GEM2DEB_TEST_RUNNER = --check-dependencies
+  * Drop rspec3 patch, upstream fixed it in other way
+  * Update Debian packaging copyright
+  * Declare compliance with Debian policy 3.9.8
+  * debian/control: remove dependency on ruby-multi-json
+  * Create patch to remove some unnecessary build dependencies
+
+ -- Lucas Kanashiro <kanashiro@debian.org>  Tue, 21 Jun 2016 13:00:10 -0300
+
+ruby-jwt (1.0.0-3) unstable; urgency=medium
+
+  * Team upload.
+  * Port tests to RSpec3 (Closes: #794259)
+
+ -- Balasankar C <balasankarc@autistici.org>  Wed, 02 Sep 2015 18:18:57 +0530
+
+ruby-jwt (1.0.0-2) unstable; urgency=medium
+
+  * Team upload
+  * Reupload to unstable.
+
+ -- Pirate Praveen <praveen@debian.org>  Wed, 29 Apr 2015 12:38:53 +0530
+
+ruby-jwt (1.0.0-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Pirate Praveen <praveen@debian.org>  Mon, 24 Nov 2014 01:23:17 +0530
+
+ruby-jwt (0.1.8-2) unstable; urgency=medium
+
+  * Team upload.
+  * Rebuild for ruby 2.1 compatibility.
+
+ -- Pirate Praveen <praveen@debian.org>  Fri, 21 Nov 2014 19:58:36 +0530
+
+ruby-jwt (0.1.8-1) unstable; urgency=low
+
+  * New upstream Release
+
+  [ Cédric Boutillier ]
+  * use of canonical URI in Vcs-* fields
+
+ -- Markus Tornow <tornow@riseup.net>  Tue, 08 Oct 2013 23:42:19 +0200
+
+ruby-jwt (0.1.5-1) unstable; urgency=low
+
+  * Initial release (Closes: #695059)
+
+ -- Markus Tornow <tornow@riseup.net>  Tue, 27 Nov 2012 18:25:50 +0100
