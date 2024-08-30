@@ -1,23 +1,24 @@
 # frozen_string_literal: true
 
 require_relative 'jwk/key_finder'
+require_relative 'jwk/set'
 
 module JWT
   module JWK
     class << self
-      def import(jwk_data)
-        jwk_kty = jwk_data[:kty] || jwk_data['kty']
-        raise JWT::JWKError, 'Key type (kty) not provided' unless jwk_kty
+      def create_from(key, params = nil, options = {})
+        if key.is_a?(Hash)
+          jwk_kty = key[:kty] || key['kty']
+          raise JWT::JWKError, 'Key type (kty) not provided' unless jwk_kty
 
-        mappings.fetch(jwk_kty.to_s) do |kty|
-          raise JWT::JWKError, "Key type #{kty} not supported"
-        end.import(jwk_data)
-      end
+          return mappings.fetch(jwk_kty.to_s) do |kty|
+            raise JWT::JWKError, "Key type #{kty} not supported"
+          end.new(key, params, options)
+        end
 
-      def create_from(keypair, kid = nil)
-        mappings.fetch(keypair.class) do |klass|
+        mappings.fetch(key.class) do |klass|
           raise JWT::JWKError, "Cannot create JWK from a #{klass.name}"
-        end.new(keypair, kid)
+        end.new(key, params, options)
       end
 
       def classes
@@ -26,6 +27,7 @@ module JWT
       end
 
       alias new create_from
+      alias import create_from
 
       private
 
@@ -50,3 +52,4 @@ require_relative 'jwk/key_base'
 require_relative 'jwk/ec'
 require_relative 'jwk/rsa'
 require_relative 'jwk/hmac'
+require_relative 'jwk/okp_rbnacl' if ::JWT.rbnacl?

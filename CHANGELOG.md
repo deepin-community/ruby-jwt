@@ -1,22 +1,57 @@
 # Changelog
 
+## [v2.7.1](https://github.com/jwt/ruby-jwt/tree/v2.8.0) (2023-06-09)
 
-## [v2.5.0](https://github.com/jwt/ruby-jwt/tree/v2.5.0) (NEXT)
+[Full Changelog](https://github.com/jwt/ruby-jwt/compare/v2.7.0...v2.8.0)
 
-[Full Changelog](https://github.com/jwt/ruby-jwt/compare/v2.4.1...master)
+**Fixes and enhancements:**
+
+- Handle invalid algorithm when decoding JWT [#559](https://github.com/jwt/ruby-jwt/pull/559) - [@nataliastanko](https://github.com/nataliastanko)
+- Do not raise error when verifying bad HMAC signature [#563](https://github.com/jwt/ruby-jwt/pull/563) - [@hieuk09](https://github.com/hieuk09)
+
+## [v2.7.0](https://github.com/jwt/ruby-jwt/tree/v2.7.0) (2023-02-01)
+
+[Full Changelog](https://github.com/jwt/ruby-jwt/compare/v2.6.0...v2.7.0)
+
+**Features:**
+
+- Support OKP (Ed25519) keys for JWKs [#540](https://github.com/jwt/ruby-jwt/pull/540) ([@anakinj](https://github.com/anakinj))
+- JWK Sets can now be used for tokens with nil kid [#543](https://github.com/jwt/ruby-jwt/pull/543) ([@bellebaum](https://github.com/bellebaum))
+
+**Fixes and enhancements:**
+
+- Fix issue with multiple keys returned by keyfinder and multiple allowed algorithms [#545](https://github.com/jwt/ruby-jwt/pull/545) ([@mpospelov](https://github.com/mpospelov))
+- Non-string `kid` header values are now rejected [#543](https://github.com/jwt/ruby-jwt/pull/543) ([@bellebaum](https://github.com/bellebaum))
+
+## [v2.6.0](https://github.com/jwt/ruby-jwt/tree/v2.6.0) (2022-12-22)
+
+[Full Changelog](https://github.com/jwt/ruby-jwt/compare/v2.5.0...v2.6.0)
+
+**Features:**
+
+- Support custom algorithms by passing algorithm objects[#512](https://github.com/jwt/ruby-jwt/pull/512) ([@anakinj](https://github.com/anakinj)).
+- Support descriptive (not key related) JWK parameters[#520](https://github.com/jwt/ruby-jwt/pull/520) ([@bellebaum](https://github.com/bellebaum)).
+- Support for JSON Web Key Sets[#525](https://github.com/jwt/ruby-jwt/pull/525) ([@bellebaum](https://github.com/bellebaum)).
+- Support HMAC keys over 32 chars when using RbNaCl[#521](https://github.com/jwt/ruby-jwt/pull/521) ([@anakinj](https://github.com/anakinj)).
+
+**Fixes and enhancements:**
+
+- Raise descriptive error on empty hmac_secret and OpenSSL 3.0/openssl gem <3.0.1 [#530](https://github.com/jwt/ruby-jwt/pull/530) ([@jonmchan](https://github.com/jonmchan)).
+
+## [v2.5.0](https://github.com/jwt/ruby-jwt/tree/v2.5.0) (2022-08-25)
+
+[Full Changelog](https://github.com/jwt/ruby-jwt/compare/v2.4.1...v2.5.0)
 
 **Features:**
 
 - Support JWK thumbprints as key ids [#481](https://github.com/jwt/ruby-jwt/pull/481) ([@anakinj](https://github.com/anakinj)).
-- Your contribution here
+- Support OpenSSL >= 3.0 [#496](https://github.com/jwt/ruby-jwt/pull/496) ([@anakinj](https://github.com/anakinj)).
 
 **Fixes and enhancements:**
 - Bring back the old Base64 (RFC2045) deocode mechanisms [#488](https://github.com/jwt/ruby-jwt/pull/488) ([@anakinj](https://github.com/anakinj)).
 - Rescue RbNaCl exception for EdDSA wrong key [#491](https://github.com/jwt/ruby-jwt/pull/491) ([@n-studio](https://github.com/n-studio)).
 - New parameter name for cases when kid is not found using JWK key loader proc [#501](https://github.com/jwt/ruby-jwt/pull/501) ([@anakinj](https://github.com/anakinj)).
 - Fix NoMethodError when a 2 segment token is missing 'alg' header [#502](https://github.com/jwt/ruby-jwt/pull/502) ([@cmrd-senya](https://github.com/cmrd-senya)).
-- Support OpenSSL >= 3.0 [#496](https://github.com/jwt/ruby-jwt/pull/496) ([@anakinj](https://github.com/anakinj)).
-- Your contribution here
 
 ## [v2.4.1](https://github.com/jwt/ruby-jwt/tree/v2.4.1) (2022-06-07)
 

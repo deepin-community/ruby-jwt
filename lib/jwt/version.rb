@@ -11,9 +11,9 @@ module JWT
     # major version
     MAJOR = 2
     # minor version
-    MINOR = 5
+    MINOR = 7
     # tiny version
-    TINY  = 0
+    TINY  = 1
     # alpha, beta, etc. tag
     PRE   = nil
 
@@ -24,5 +24,21 @@ module JWT
   def self.openssl_3?
     return false if OpenSSL::OPENSSL_VERSION.include?('LibreSSL')
     return true if OpenSSL::OPENSSL_VERSION_NUMBER >= 3 * 0x10000000
+  end
+
+  def self.rbnacl?
+    defined?(::RbNaCl)
+  end
+
+  def self.rbnacl_6_or_greater?
+    rbnacl? && ::Gem::Version.new(::RbNaCl::VERSION) >= ::Gem::Version.new('6.0.0')
+  end
+
+  def self.openssl_3_hmac_empty_key_regression?
+    openssl_3? && openssl_version <= ::Gem::Version.new('3.0.0')
+  end
+
+  def self.openssl_version
+    @openssl_version ||= ::Gem::Version.new(OpenSSL::VERSION)
   end
 end

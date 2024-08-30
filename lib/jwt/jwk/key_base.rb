@@ -8,28 +8,48 @@ module JWT
         ::JWT::JWK.classes << klass
       end
 
-      def initialize(options)
+      def initialize(options, params = {})
         options ||= {}
 
-        if options.is_a?(String) # For backwards compatibility when kid was a String
-          options = { kid: options }
-        end
+        @parameters = params.transform_keys(&:to_sym) # Uniform interface
 
-        @kid           = options[:kid]
-        @kid_generator = options[:kid_generator] || ::JWT.configuration.jwk.kid_generator
+        # For backwards compatibility, kid_generator may be specified in the parameters
+        options[:kid_generator] ||= @parameters.delete(:kid_generator)
+
+        # Make sure the key has a kid
+        kid_generator = options[:kid_generator] || ::JWT.configuration.jwk.kid_generator
+        self[:kid] ||= kid_generator.new(self).generate
       end
 
       def kid
-        @kid ||= generate_kid
+        self[:kid]
+      end
+
+      def hash
+        self[:kid].hash
+      end
+
+      def [](key)
+        @parameters[key.to_sym]
+      end
+
+      def []=(key, value)
+        @parameters[key.to_sym] = value
+      end
+
+      def ==(other)
+        self[:kid] == other[:kid]
+      end
+
+      alias eql? ==
+
+      def <=>(other)
+        self[:kid] <=> other[:kid]
       end
 
       private
 
-      attr_reader :kid_generator
-
-      def generate_kid
-        kid_generator.new(self).generate
-      end
+      attr_reader :parameters
     end
   end
 end

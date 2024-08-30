@@ -29,7 +29,7 @@ Metrics/AbcSize:
   Max: 25
 
 Metrics/ClassLength:
-  Max: 112
+  Max: 121
 
 Metrics/ModuleLength:
   Max: 100
@@ -40,6 +40,7 @@ Metrics/MethodLength:
 Metrics/BlockLength:
   Exclude:
     - spec/**/*_spec.rb
+    - '*.gemspec'
 
 Layout/LineLength:
   Enabled: false
@@ -61,7 +62,4 @@ Layout/MultilineOperationIndentation:
   EnforcedStyle: indented
 
 Style/WordArray:
-  Enabled: false
-
-Gemspec/RequireMFA:
   Enabled: false
