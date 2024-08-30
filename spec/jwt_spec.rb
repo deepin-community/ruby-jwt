@@ -14,6 +14,8 @@ RSpec.describe JWT do
       :wrong_rsa_public => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'rsa-2048-wrong-public.pem'))),
       'ES256_private' => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'ec256-private.pem'))),
       'ES256_public' => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'ec256-public.pem'))),
+      'ES256_private_v2' => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'ec256-private-v2.pem'))),
+      'ES256_public_v2' => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'ec256-public-v2.pem'))),
       'ES384_private' => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'ec384-private.pem'))),
       'ES384_public' => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'ec384-public.pem'))),
       'ES512_private' => OpenSSL::PKey.read(File.read(File.join(CERT_PATH, 'ec512-private.pem'))),
@@ -36,7 +38,7 @@ RSpec.describe JWT do
       'PS512' => ''
     }
 
-    if defined?(RbNaCl)
+    if ::JWT.rbnacl?
       ed25519_private = RbNaCl::Signatures::Ed25519::SigningKey.new('abcdefghijklmnopqrstuvwxyzABCDEF')
       ed25519_public =  ed25519_private.verify_key
       data.merge!(
@@ -123,7 +125,7 @@ RSpec.describe JWT do
   end
 
   algorithms = %w[HS256 HS384 HS512]
-  algorithms << 'HS512256' if defined?(RbNaCl)
+  algorithms << 'HS512256' if ::JWT.rbnacl?
 
   algorithms.each do |alg|
     context "alg: #{alg}" do
@@ -629,7 +631,7 @@ RSpec.describe JWT do
 
   context 'when hmac algorithm is used without secret key' do
     it 'encodes payload' do
-      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
+      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3_hmac_empty_key_regression?
       payload = { a: 1, b: 'b' }
 
       token = JWT.encode(payload, '', 'HS256')
@@ -729,7 +731,7 @@ RSpec.describe JWT do
     let(:token) { JWT.encode(payload, 'HS256', 'HS256') }
     it 'decodes the token but does not pass the payload' do
       expect(JWT.decode(token, nil, true, algorithm: 'HS256') do |header, token_payload, nothing|
-        expect(token_payload).to eq(nil)  # This behaviour is not correct, the payload should be available in the keyfinder
+        expect(token_payload).to eq(nil) # This behaviour is not correct, the payload should be available in the keyfinder
         expect(nothing).to eq(nil)
         header['alg']
       end).to include(payload)
@@ -760,7 +762,7 @@ RSpec.describe JWT do
   describe 'when token signed with nil and decoded with nil' do
     let(:no_key_token) { ::JWT.encode(payload, nil, 'HS512') }
     it 'raises JWT::DecodeError' do
-      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
+      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3_hmac_empty_key_regression?
       expect { ::JWT.decode(no_key_token, nil, true, algorithms: 'HS512') }.to raise_error(JWT::DecodeError, 'No verification key available')
     end
   end
@@ -769,6 +771,166 @@ RSpec.describe JWT do
     let(:token) { "#{JWT.encode(payload, 'secret', 'HS256')}\n" }
     it 'ignores the newline and decodes the token' do
       expect(JWT.decode(token, 'secret', true, algorithm: 'HS256')).to include(payload)
+    end
+  end
+
+  context 'when multiple algorithms given' do
+    let(:token) { JWT.encode(payload, 'secret', 'HS256') }
+
+    it 'starts trying with the algorithm referred in the header' do
+      expect(::JWT::Algos::Rsa).not_to receive(:verify)
+      JWT.decode(token, 'secret', true, algorithm: ['RS512', 'HS256'])
+    end
+  end
+
+  context 'when keyfinder resolves to multiple keys and multiple algorithms given' do
+    let(:iss_key_mappings) do
+      {
+        'ES256' => [data['ES256_public_v2'], data['ES256_public']],
+        'HS256' => data['HS256']
+      }
+    end
+
+    context 'with issue with ES256 keys' do
+      it 'tries until the first match' do
+        token = JWT.encode(payload, data['ES256_private'], 'ES256', 'iss' => 'ES256')
+        result = JWT.decode(token, nil, true, algorithm: ['ES256', 'HS256']) do |header, _|
+          iss_key_mappings[header['iss']]
+        end
+
+        expect(result).to include(payload)
+      end
+
+      it 'tries until the first match' do
+        token = JWT.encode(payload, data['ES256_private_v2'], 'ES256', 'iss' => 'ES256')
+        result = JWT.decode(token, nil, true, algorithm: ['ES256', 'HS256']) do |header, _|
+          iss_key_mappings[header['iss']]
+        end
+
+        expect(result).to include(payload)
+      end
+    end
+
+    context 'with issue with HS256 keys' do
+      it 'tries until the first match' do
+        token = JWT.encode(payload, data['HS256'], 'HS256', 'iss' => 'HS256')
+        result = JWT.decode(token, nil, true, algorithm: ['ES256', 'HS256']) do |header, _|
+          iss_key_mappings[header['iss']]
+        end
+
+        expect(result).to include(payload)
+      end
+    end
+  end
+
+  context 'when token is missing the alg header' do
+    let(:token) { 'e30.eyJ1c2VyX2lkIjoic29tZUB1c2VyLnRsZCJ9.DIKUOt1lwwzWSPBf508IYqk0KzC2PL97OZc6pECzE1I' }
+
+    it 'raises JWT::IncorrectAlgorithm error' do
+      expect { JWT.decode(token, 'secret', true, algorithm: 'HS256') }.to raise_error(JWT::IncorrectAlgorithm, 'Token is missing alg header')
+    end
+  end
+
+  context 'when token has null as the alg header' do
+    let(:token) { 'eyJhbGciOm51bGx9.eyJwYXkiOiJsb2FkIn0.pizVPWJMK-GUuXXEcQD_faZGnZqz_6wKZpoGO4RdqbY' }
+    it 'raises JWT::IncorrectAlgorithm error' do
+      expect { JWT.decode(token, 'secret', true, algorithm: 'HS256') }.to raise_error(JWT::IncorrectAlgorithm, 'Token is missing alg header')
+    end
+  end
+
+  context 'when the alg is invalid' do
+    let(:token) { 'eyJhbGciOiJIUzI1NiJ9.eyJwYXkiOiJsb2FkIn0.ZpAhTTtuo-CmbgT6-95NaM_wFckKeyI157baZ29H41o' }
+
+    it 'raises JWT::IncorrectAlgorithm error' do
+      expect { JWT.decode(token, 'secret', true, algorithm: 'invalid-HS256') }.to raise_error(JWT::IncorrectAlgorithm, 'Expected a different algorithm')
+    end
+  end
+
+  context 'when algorithm is a custom class' do
+    let(:custom_algorithm) do
+      Class.new do
+        attr_reader :alg
+
+        def initialize(signature: 'custom_signature', alg: 'custom')
+          @signature = signature
+          @alg = alg
+        end
+
+        def sign(*)
+          @signature
+        end
+
+        def verify(data:, signature:, verification_key:) # rubocop:disable Lint/UnusedMethodArgument
+          signature == @signature
+        end
+
+        def valid_alg?(alg)
+          alg == self.alg
+        end
+      end
+    end
+
+    let(:token) { JWT.encode(payload, 'secret', custom_algorithm.new) }
+    let(:expected_token) { 'eyJhbGciOiJjdXN0b20ifQ.eyJ1c2VyX2lkIjoic29tZUB1c2VyLnRsZCJ9.Y3VzdG9tX3NpZ25hdHVyZQ' }
+
+    it 'can be used for encoding' do
+      expect(token).to eq(expected_token)
+    end
+
+    it 'can be used for decoding' do
+      expect(JWT.decode(token, 'secret', true, algorithm: custom_algorithm.new)).to eq([payload, { 'alg' => 'custom' }])
+    end
+
+    context 'when multiple custom algorithms are given for decoding' do
+      it 'tries until the first match' do
+        expect(JWT.decode(token, 'secret', true, algorithms: [custom_algorithm.new(signature: 'not_this'), custom_algorithm.new])).to eq([payload, { 'alg' => 'custom' }])
+      end
+    end
+
+    context 'when alg is not matching' do
+      it 'fails the validation process' do
+        expect { JWT.decode(token, 'secret', true, algorithms: custom_algorithm.new(alg: 'not_a_match')) }.to raise_error(JWT::IncorrectAlgorithm, 'Expected a different algorithm')
+      end
+    end
+
+    context 'when signature is not matching' do
+      it 'fails the validation process' do
+        expect { JWT.decode(token, 'secret', true, algorithms: custom_algorithm.new(signature: 'not_a_match')) }.to raise_error(JWT::VerificationError, 'Signature verification failed')
+      end
+    end
+
+    context 'when #sign method is missing' do
+      before do
+        custom_algorithm.instance_eval do
+          remove_method :sign
+        end
+      end
+
+      # This behaviour should be somehow nicer
+      it 'raises an error on encoding' do
+        expect { token }.to raise_error(NoMethodError)
+      end
+
+      it 'allows decoding' do
+        expect(JWT.decode(expected_token, 'secret', true, algorithm: custom_algorithm.new)).to eq([payload, { 'alg' => 'custom' }])
+      end
+    end
+
+    context 'when #verify method is missing' do
+      before do
+        custom_algorithm.instance_eval do
+          remove_method :verify
+        end
+      end
+
+      it 'can be used for encoding' do
+        expect(token).to eq(expected_token)
+      end
+
+      # This behaviour should be somehow nicer
+      it 'raises error on decoding' do
+        expect { JWT.decode(expected_token, 'secret', true, algorithm: custom_algorithm.new) }.to raise_error(NoMethodError)
+      end
     end
   end
 end

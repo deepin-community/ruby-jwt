@@ -1,11 +1,10 @@
 # JWT
 
 [![Gem Version](https://badge.fury.io/rb/jwt.svg)](https://badge.fury.io/rb/jwt)
-[![Build Status](https://github.com/jwt/ruby-jwt/workflows/test/badge.svg?branch=master)](https://github.com/jwt/ruby-jwt/actions)
+[![Build Status](https://github.com/jwt/ruby-jwt/workflows/test/badge.svg?branch=main)](https://github.com/jwt/ruby-jwt/actions)
 [![Code Climate](https://codeclimate.com/github/jwt/ruby-jwt/badges/gpa.svg)](https://codeclimate.com/github/jwt/ruby-jwt)
 [![Test Coverage](https://codeclimate.com/github/jwt/ruby-jwt/badges/coverage.svg)](https://codeclimate.com/github/jwt/ruby-jwt/coverage)
 [![Issue Count](https://codeclimate.com/github/jwt/ruby-jwt/badges/issue_count.svg)](https://codeclimate.com/github/jwt/ruby-jwt)
-[![SourceLevel](https://app.sourcelevel.io/github/jwt/-/ruby-jwt.svg)](https://app.sourcelevel.io/github/jwt/-/ruby-jwt)
 
 A ruby implementation of the [RFC 7519 OAuth JSON Web Token (JWT)](https://tools.ietf.org/html/rfc7519) standard.
 
@@ -78,7 +77,7 @@ puts decoded_token
 * HS512 - HMAC using SHA-512 hash algorithm
 
 ```ruby
-# The secret must be a string. A JWT::DecodeError will be raised if it isn't provided.
+# The secret must be a string. With OpenSSL 3.0/openssl gem `<3.0.1`, JWT::DecodeError will be raised if it isn't provided.
 hmac_secret = 'my$ecretK3y'
 
 token = JWT.encode payload, hmac_secret, 'HS256'
@@ -96,9 +95,9 @@ decoded_token = JWT.decode token, hmac_secret, true, { algorithm: 'HS256' }
 puts decoded_token
 ```
 
-Note: If [RbNaCl](https://github.com/cryptosphere/rbnacl) is loadable, ruby-jwt will use it for HMAC-SHA256, HMAC-SHA512-256, and HMAC-SHA512. RbNaCl enforces a maximum key size of 32 bytes for these algorithms.
+Note: If [RbNaCl](https://github.com/RubyCrypto/rbnacl) is loadable, ruby-jwt will use it for HMAC-SHA256, HMAC-SHA512-256, and HMAC-SHA512. RbNaCl prior to 6.0.0 only support a maximum key size of 32 bytes for these algorithms.
 
-[RbNaCl](https://github.com/cryptosphere/rbnacl) requires
+[RbNaCl](https://github.com/RubyCrypto/rbnacl) requires
 [libsodium](https://github.com/jedisct1/libsodium), it can be installed
 on MacOS with `brew install libsodium`.
 
@@ -160,7 +159,7 @@ In order to use this algorithm you need to add the `RbNaCl` gem to you `Gemfile`
 gem 'rbnacl'
 ```
 
-For more detailed installation instruction check the official [repository](https://github.com/cryptosphere/rbnacl) on GitHub.
+For more detailed installation instruction check the official [repository](https://github.com/RubyCrypto/rbnacl) on GitHub.
 
 * ED25519
 
@@ -210,6 +209,33 @@ decoded_token = JWT.decode token, rsa_public, true, { algorithm: 'PS256' }
 #   {"alg"=>"PS256"} # header
 # ]
 puts decoded_token
+```
+
+### **Custom algorithms**
+
+An object implementing custom signing or verification behaviour can be passed in the `algorithm` option when encoding and decoding. The given object needs to implement the method `valid_alg?` and `verify` and/or `alg` and `sign`, depending if object is used for encoding or decoding.
+
+```ruby
+module CustomHS512Algorithm
+  def self.alg
+    'HS512'
+  end
+
+  def self.valid_alg?(alg_to_validate)
+    alg_to_validate == alg
+  end
+
+  def self.sign(data:, signing_key:)
+    OpenSSL::HMAC.digest(OpenSSL::Digest.new('sha512'), data, signing_key)
+  end
+
+  def self.verify(data:, signature:, verification_key:)
+    ::OpenSSL.secure_compare(sign(data: data, signing_key: verification_key), signature)
+  end
+end
+
+token = ::JWT.encode({'pay' => 'load'}, 'secret', CustomHS512Algorithm)
+payload, header = ::JWT.decode(token, 'secret', true, algorithm: CustomHS512Algorithm)
 ```
 
 ## Support for reserved claim names
@@ -543,73 +569,115 @@ end
 
 ### JSON Web Key (JWK)
 
-JWK is a JSON structure representing a cryptographic key. Currently only supports RSA, EC and HMAC keys. The `jwks` option can be given as a lambda that evaluates every time a kid is resolved.
+JWK is a JSON structure representing a cryptographic key. This gem currently supports RSA, EC, OKP and HMAC keys. OKP support requires [RbNaCl](https://github.com/RubyCrypto/rbnacl) and currently only supports the Ed25519 curve.
 
-If the kid is not found from the given set the loader will be called a second time with the `kid_not_found` option set to `true`. The application can choose to implement some kind of JWK cache invalidation or other mechanism to handle such cases.
+To encode a JWT using your JWK:
 
 ```ruby
-  jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), 'optional-kid')
-  payload = { data: 'data' }
-  headers = { kid: jwk.kid }
+optional_parameters = { kid: 'my-kid', use: 'sig', alg: 'RS512' }
+jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), optional_parameters)
 
-  token = JWT.encode(payload, jwk.keypair, 'RS512', headers)
+# Encoding
+payload = { data: 'data' }
+token = JWT.encode(payload, jwk.signing_key, jwk[:alg], kid: jwk[:kid])
 
-  # The jwk loader would fetch the set of JWKs from a trusted source,
-  # to avoid malicious requests triggering cache invalidations there needs to be some kind of grace time or other logic for determining the validity of the invalidation.
+# JSON Web Key Set for advertising your signing keys
+jwks_hash = JWT::JWK::Set.new(jwk).export
+```
+
+To decode a JWT using a trusted entity's JSON Web Key Set (JWKS):
+
+```ruby
+jwks = JWT::JWK::Set.new(jwks_hash)
+jwks.filter! {|key| key[:use] == 'sig' } # Signing keys only!
+algorithms = jwks.map { |key| key[:alg] }.compact.uniq
+JWT.decode(token, nil, true, algorithms: algorithms, jwks: jwks)
+```
+
+
+The `jwks` option can also be given as a lambda that evaluates every time a kid is resolved.
+This can be used to implement caching of remotely fetched JWK Sets.
+
+If the requested `kid` is not found from the given set the loader will be called a second time with the `kid_not_found` option set to `true`.
+The application can choose to implement some kind of JWK cache invalidation or other mechanism to handle such cases.
+
+Tokens without a specified `kid` are rejected by default.
+This behaviour may be overwritten by setting the `allow_nil_kid` option for `decode` to `true`.
+
+```ruby
+jwks_loader = ->(options) do
+  # The jwk loader would fetch the set of JWKs from a trusted source.
+  # To avoid malicious requests triggering cache invalidations there needs to be
+  # some kind of grace time or other logic for determining the validity of the invalidation.
   # This example only allows cache invalidations every 5 minutes.
-  jwk_loader = ->(options) do
-    if options[:kid_not_found] && @cache_last_update < Time.now.to_i - 300
-      logger.info("Invalidating JWK cache. #{options[:kid]} not found from previous cache")
-      @cached_keys = nil
-    end
-    @cached_keys ||= begin
-      @cache_last_update = Time.now.to_i
-      { keys: [jwk.export] }
-    end
+  if options[:kid_not_found] && @cache_last_update < Time.now.to_i - 300
+    logger.info("Invalidating JWK cache. #{options[:kid]} not found from previous cache")
+    @cached_keys = nil
   end
-
-  begin
-    JWT.decode(token, nil, true, { algorithms: ['RS512'], jwks: jwk_loader })
-  rescue JWT::JWKError
-    # Handle problems with the provided JWKs
-  rescue JWT::DecodeError
-    # Handle other decode related issues e.g. no kid in header, no matching public key found etc.
+  @cached_keys ||= begin
+    @cache_last_update = Time.now.to_i
+    # Replace with your own JWKS fetching routine
+    jwks = JWT::JWK::Set.new(jwks_hash)
+    jwks.select! { |key| key[:use] == 'sig' } # Signing Keys only
+    jwks
   end
-```
+end
 
-or by passing the JWKs as a simple Hash
-
-```
-jwks = { keys: [{ ... }] } # keys accepts both of string and symbol
-JWT.decode(token, nil, true, { algorithms: ['RS512'], jwks: jwks})
+begin
+  JWT.decode(token, nil, true, { algorithms: ['RS512'], jwks: jwks_loader })
+rescue JWT::JWKError
+  # Handle problems with the provided JWKs
+rescue JWT::DecodeError
+  # Handle other decode related issues e.g. no kid in header, no matching public key found etc.
+end
 ```
 
 ### Importing and exporting JSON Web Keys
 
-The ::JWT::JWK class can be used to import and export both the public key (default behaviour) and the private key. To include the private key in the export pass the `include_private` parameter to the export method.
+The ::JWT::JWK class can be used to import both JSON Web Keys and OpenSSL keys
+and export to either format with and without the private key included.
+
+To include the private key in the export pass the `include_private` parameter to the export method.
 
 ```ruby
-jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048))
+# Import a JWK Hash (showing an HMAC example)
+jwk = JWT::JWK.new({ kty: 'oct', k: 'my-secret', kid: 'my-kid' })
 
+# Import an OpenSSL key
+# You can optionally add descriptive parameters to the JWK
+desc_params = { kid: 'my-kid', use: 'sig' }
+jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), desc_params)
+
+# Export as JWK Hash (public key only by default)
 jwk_hash = jwk.export
 jwk_hash_with_private_key = jwk.export(include_private: true)
+
+# Export as OpenSSL key
+public_key = jwk.verify_key
+private_key = jwk.signing_key if jwk.private?
+
+# You can also import and export entire JSON Web Key Sets
+jwks_hash = { keys: [{ kty: 'oct', k: 'my-secret', kid: 'my-kid' }] }
+jwks = JWT::JWK::Set.new(jwks_hash)
+jwks_hash = jwks.export
 ```
 
 ### Key ID (kid) and JWKs
 
-The key id (kid) generation in the gem is a custom algorithm and not based on any standards. To use a standardized JWK thumbprint (RFC 7638) as the kid for JWKs a generator type can be specified in the global configuration or can be given to the JWK instance on initialization.
+The key id (kid) generation in the gem is a custom algorithm and not based on any standards.
+To use a standardized JWK thumbprint (RFC 7638) as the kid for JWKs a generator type can be specified in the global configuration
+or can be given to the JWK instance on initialization.
 
 ```ruby
 JWT.configuration.jwk.kid_generator_type = :rfc7638_thumbprint
 # OR
 JWT.configuration.jwk.kid_generator = ::JWT::JWK::Thumbprint
 # OR
-jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), kid_generator: ::JWT::JWK::Thumbprint)
+jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), nil, kid_generator: ::JWT::JWK::Thumbprint)
 
 jwk_hash = jwk.export
 
 thumbprint_as_the_kid = jwk_hash[:kid]
-
 ```
 
 # Development and Tests

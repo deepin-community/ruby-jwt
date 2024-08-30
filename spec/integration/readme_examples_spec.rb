@@ -29,7 +29,7 @@ RSpec.describe 'README.md code test' do
     end
 
     it 'decodes with HMAC algorithm without secret key' do
-      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3?
+      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3_hmac_empty_key_regression?
       token = JWT.encode payload, nil, 'HS256'
       decoded_token = JWT.decode token, nil, false
 
@@ -273,16 +273,37 @@ RSpec.describe 'README.md code test' do
       end.not_to raise_error
     end
 
-    context 'The JWK loader example' do
+    context 'The JWK based encode/decode routine' do
+      it 'works as expected' do
+        # ---------- ENCODE ----------
+        optional_parameters = { kid: 'my-kid', use: 'sig', alg: 'RS512' }
+        jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), optional_parameters)
+
+        # Encoding
+        payload = { data: 'data' }
+        token = JWT.encode(payload, jwk.signing_key, jwk[:alg], kid: jwk[:kid])
+
+        # JSON Web Key Set for advertising your signing keys
+        jwks_hash = JWT::JWK::Set.new(jwk).export
+
+        # ---------- DECODE ----------
+        jwks = JWT::JWK::Set.new(jwks_hash)
+        jwks.filter! { |key| key[:use] == 'sig' } # Signing keys only!
+        algorithms = jwks.map { |key| key[:alg] }.compact.uniq
+        JWT.decode(token, nil, true, algorithms: algorithms, jwks: jwks)
+      end
+    end
+
+    context 'The JWKS loader example' do
       let(:logger_output) { StringIO.new }
       let(:logger) { Logger.new(logger_output) }
 
-      it 'works as expected' do
+      it 'works as expected (legacy)' do
         jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), 'optional-kid')
         payload = { data: 'data' }
         headers = { kid: jwk.kid }
 
-        token = JWT.encode(payload, jwk.keypair, 'RS512', headers)
+        token = JWT.encode(payload, jwk.signing_key, 'RS512', headers)
 
         # The jwk loader would fetch the set of JWKs from a trusted source,
         # to avoid malicious invalidations some kind of protection needs to be implemented.
@@ -311,7 +332,7 @@ RSpec.describe 'README.md code test' do
 
         headers = { kid: jwk.kid }
 
-        token = JWT.encode(payload, jwk.keypair, 'RS512', headers)
+        token = JWT.encode(payload, jwk.signing_key, 'RS512', headers)
         @cache_last_update = Time.now.to_i - 301
 
         JWT.decode(token, nil, true, { algorithms: ['RS512'], jwks: jwk_loader })
@@ -319,9 +340,67 @@ RSpec.describe 'README.md code test' do
 
         jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), 'yet-another-new-kid')
         headers = { kid: jwk.kid }
-        token = JWT.encode(payload, jwk.keypair, 'RS512', headers)
+        token = JWT.encode(payload, jwk.signing_key, 'RS512', headers)
         expect { JWT.decode(token, nil, true, { algorithms: ['RS512'], jwks: jwk_loader }) }.to raise_error(JWT::DecodeError, 'Could not find public key for kid yet-another-new-kid')
       end
+
+      it 'works as expected' do
+        jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), use: 'sig')
+        jwks_hash = JWT::JWK::Set.new(jwk)
+        payload = { data: 'data' }
+        headers = { kid: jwk.kid }
+
+        token = JWT.encode(payload, jwk.signing_key, 'RS512', headers)
+
+        jwks_loader = ->(options) do
+          # The jwk loader would fetch the set of JWKs from a trusted source.
+          # To avoid malicious requests triggering cache invalidations there needs to be
+          # some kind of grace time or other logic for determining the validity of the invalidation.
+          # This example only allows cache invalidations every 5 minutes.
+          if options[:kid_not_found] && @cache_last_update < Time.now.to_i - 300
+            logger.info("Invalidating JWK cache. #{options[:kid]} not found from previous cache")
+            @cached_keys = nil
+          end
+          @cached_keys ||= begin
+            @cache_last_update = Time.now.to_i
+            # Replace with your own JWKS fetching routine
+            jwks = JWT::JWK::Set.new(jwks_hash)
+            jwks.select! { |key| key[:use] == 'sig' } # Signing Keys only
+            jwks
+          end
+        end
+
+        begin
+          JWT.decode(token, nil, true, { algorithms: ['RS512'], jwks: jwks_loader })
+        rescue JWT::JWKError
+          # Handle problems with the provided JWKs
+        rescue JWT::DecodeError
+          # Handle other decode related issues e.g. no kid in header, no matching public key found etc.
+        end
+      end
+    end
+
+    it 'JWK import and export' do
+      # Import a JWK Hash (showing an HMAC example)
+      _jwk = JWT::JWK.new({ kty: 'oct', k: 'my-secret', kid: 'my-kid' })
+
+      # Import an OpenSSL key
+      # You can optionally add descriptive parameters to the JWK
+      desc_params = { kid: 'my-kid', use: 'sig' }
+      jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), desc_params)
+
+      # Export as JWK Hash (public key only by default)
+      _jwk_hash = jwk.export
+      _jwk_hash_with_private_key = jwk.export(include_private: true)
+
+      # Export as OpenSSL key
+      _public_key = jwk.verify_key
+      _private_key = jwk.signing_key if jwk.private?
+
+      # You can also import and export entire JSON Web Key Sets
+      jwks_hash = { keys: [{ kty: 'oct', k: 'my-secret', kid: 'my-kid' }] }
+      jwks = JWT::JWK::Set.new(jwks_hash)
+      _jwks_hash = jwks.export
     end
 
     it 'JWK with thumbprint as kid via symbol' do
@@ -344,12 +423,45 @@ RSpec.describe 'README.md code test' do
       expect(jwk_hash[:kid].size).to eq(43)
     end
 
-    it 'JWK with thumbprint given in the initializer' do
+    it 'JWK with thumbprint given in the initializer (legacy)' do
       jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), kid_generator: ::JWT::JWK::Thumbprint)
 
       jwk_hash = jwk.export
 
       expect(jwk_hash[:kid].size).to eq(43)
+    end
+
+    it 'JWK with thumbprint given in the initializer' do
+      jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), nil, kid_generator: ::JWT::JWK::Thumbprint)
+
+      jwk_hash = jwk.export
+
+      expect(jwk_hash[:kid].size).to eq(43)
+    end
+  end
+
+  context 'custom algorithm example' do
+    it 'allows a module to be used as algorithm on encode and decode' do
+      custom_hs512_alg = Module.new do
+        def self.alg
+          'HS512'
+        end
+
+        def self.valid_alg?(alg_to_validate)
+          alg_to_validate == alg
+        end
+
+        def self.sign(data:, signing_key:)
+          OpenSSL::HMAC.digest(OpenSSL::Digest.new('sha512'), data, signing_key)
+        end
+
+        def self.verify(data:, signature:, verification_key:)
+          sign(data: data, signing_key: verification_key) == signature
+        end
+      end
+
+      token = ::JWT.encode({ 'pay' => 'load' }, 'secret', custom_hs512_alg)
+      _payload, _header = ::JWT.decode(token, 'secret', true, algorithm: custom_hs512_alg)
     end
   end
 end

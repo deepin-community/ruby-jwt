@@ -5,59 +5,96 @@ require 'forwardable'
 module JWT
   module JWK
     class EC < KeyBase # rubocop:disable Metrics/ClassLength
-      extend Forwardable
-      def_delegators :keypair, :public_key
-
       KTY    = 'EC'
-      KTYS   = [KTY, OpenSSL::PKey::EC].freeze
+      KTYS   = [KTY, OpenSSL::PKey::EC, JWT::JWK::EC].freeze
       BINARY = 2
+      EC_PUBLIC_KEY_ELEMENTS = %i[kty crv x y].freeze
+      EC_PRIVATE_KEY_ELEMENTS = %i[d].freeze
+      EC_KEY_ELEMENTS = (EC_PRIVATE_KEY_ELEMENTS + EC_PUBLIC_KEY_ELEMENTS).freeze
 
-      attr_reader :keypair
+      def initialize(key, params = nil, options = {})
+        params ||= {}
 
-      def initialize(keypair, options = {})
-        raise ArgumentError, 'keypair must be of type OpenSSL::PKey::EC' unless keypair.is_a?(OpenSSL::PKey::EC)
+        # For backwards compatibility when kid was a String
+        params = { kid: params } if params.is_a?(String)
 
-        @keypair = keypair
+        key_params = extract_key_params(key)
 
-        super(options)
+        params = params.transform_keys(&:to_sym)
+        check_jwk_params!(key_params, params)
+
+        super(options, key_params.merge(params))
+      end
+
+      def keypair
+        ec_key
       end
 
       def private?
-        @keypair.private_key?
+        ec_key.private_key?
+      end
+
+      def signing_key
+        ec_key
+      end
+
+      def verify_key
+        ec_key
+      end
+
+      def public_key
+        ec_key
       end
 
       def members
-        crv, x_octets, y_octets = keypair_components(keypair)
-        {
-          kty: KTY,
-          crv: crv,
-          x: encode_octets(x_octets),
-          y: encode_octets(y_octets)
-        }
+        EC_PUBLIC_KEY_ELEMENTS.each_with_object({}) { |i, h| h[i] = self[i] }
       end
 
       def export(options = {})
-        exported_hash = members.merge(kid: kid)
-
-        return exported_hash unless private? && options[:include_private] == true
-
-        append_private_parts(exported_hash)
+        exported = parameters.clone
+        exported.reject! { |k, _| EC_PRIVATE_KEY_ELEMENTS.include? k } unless private? && options[:include_private] == true
+        exported
       end
 
       def key_digest
-        _crv, x_octets, y_octets = keypair_components(keypair)
+        _crv, x_octets, y_octets = keypair_components(ec_key)
         sequence = OpenSSL::ASN1::Sequence([OpenSSL::ASN1::Integer.new(OpenSSL::BN.new(x_octets, BINARY)),
                                             OpenSSL::ASN1::Integer.new(OpenSSL::BN.new(y_octets, BINARY))])
         OpenSSL::Digest::SHA256.hexdigest(sequence.to_der)
       end
 
+      def []=(key, value)
+        if EC_KEY_ELEMENTS.include?(key.to_sym)
+          raise ArgumentError, 'cannot overwrite cryptographic key attributes'
+        end
+
+        super(key, value)
+      end
+
       private
 
-      def append_private_parts(the_hash)
-        octets = keypair.private_key.to_bn.to_s(BINARY)
-        the_hash.merge(
-          d: encode_octets(octets)
-        )
+      def ec_key
+        @ec_key ||= create_ec_key(self[:crv], self[:x], self[:y], self[:d])
+      end
+
+      def extract_key_params(key)
+        case key
+        when JWT::JWK::EC
+          key.export(include_private: true)
+        when OpenSSL::PKey::EC # Accept OpenSSL key as input
+          @ec_key = key # Preserve the object to avoid recreation
+          parse_ec_key(key)
+        when Hash
+          key.transform_keys(&:to_sym)
+        else
+          raise ArgumentError, 'key must be of type OpenSSL::PKey::EC or Hash with key parameters'
+        end
+      end
+
+      def check_jwk_params!(key_params, params)
+        raise ArgumentError, 'cannot overwrite cryptographic key attributes' unless (EC_KEY_ELEMENTS & params.keys).empty?
+        raise JWT::JWKError, "Incorrect 'kty' value: #{key_params[:kty]}, expected #{KTY}" unless key_params[:kty] == KTY
+        raise JWT::JWKError, 'Key format is invalid for EC' unless key_params[:crv] && key_params[:x] && key_params[:y]
       end
 
       def keypair_components(ec_keypair)
@@ -82,6 +119,8 @@ module JWT
       end
 
       def encode_octets(octets)
+        return unless octets
+
         ::JWT::Base64.url_encode(octets)
       end
 
@@ -89,15 +128,94 @@ module JWT
         ::JWT::Base64.url_encode(key_part.to_s(BINARY))
       end
 
+      def parse_ec_key(key)
+        crv, x_octets, y_octets = keypair_components(key)
+        octets = key.private_key&.to_bn&.to_s(BINARY)
+        {
+          kty: KTY,
+          crv: crv,
+          x: encode_octets(x_octets),
+          y: encode_octets(y_octets),
+          d: encode_octets(octets)
+        }.compact
+      end
+
+      if ::JWT.openssl_3?
+        def create_ec_key(jwk_crv, jwk_x, jwk_y, jwk_d) # rubocop:disable Metrics/MethodLength
+          curve = EC.to_openssl_curve(jwk_crv)
+
+          x_octets = decode_octets(jwk_x)
+          y_octets = decode_octets(jwk_y)
+
+          point = OpenSSL::PKey::EC::Point.new(
+            OpenSSL::PKey::EC::Group.new(curve),
+            OpenSSL::BN.new([0x04, x_octets, y_octets].pack('Ca*a*'), 2)
+          )
+
+          sequence = if jwk_d
+            # https://datatracker.ietf.org/doc/html/rfc5915.html
+            # ECPrivateKey ::= SEQUENCE {
+            #   version        INTEGER { ecPrivkeyVer1(1) } (ecPrivkeyVer1),
+            #   privateKey     OCTET STRING,
+            #   parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
+            #   publicKey  [1] BIT STRING OPTIONAL
+            # }
+
+            OpenSSL::ASN1::Sequence([
+                                      OpenSSL::ASN1::Integer(1),
+                                      OpenSSL::ASN1::OctetString(OpenSSL::BN.new(decode_octets(jwk_d), 2).to_s(2)),
+                                      OpenSSL::ASN1::ObjectId(curve, 0, :EXPLICIT),
+                                      OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed), 1, :EXPLICIT)
+                                    ])
+          else
+            OpenSSL::ASN1::Sequence([
+                                      OpenSSL::ASN1::Sequence([OpenSSL::ASN1::ObjectId('id-ecPublicKey'), OpenSSL::ASN1::ObjectId(curve)]),
+                                      OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed))
+                                    ])
+          end
+
+          OpenSSL::PKey::EC.new(sequence.to_der)
+        end
+      else
+        def create_ec_key(jwk_crv, jwk_x, jwk_y, jwk_d)
+          curve = EC.to_openssl_curve(jwk_crv)
+
+          x_octets = decode_octets(jwk_x)
+          y_octets = decode_octets(jwk_y)
+
+          key = OpenSSL::PKey::EC.new(curve)
+
+          # The details of the `Point` instantiation are covered in:
+          # - https://docs.ruby-lang.org/en/2.4.0/OpenSSL/PKey/EC.html
+          # - https://www.openssl.org/docs/manmaster/man3/EC_POINT_new.html
+          # - https://tools.ietf.org/html/rfc5480#section-2.2
+          # - https://www.secg.org/SEC1-Ver-1.0.pdf
+          # Section 2.3.3 of the last of these references specifies that the
+          # encoding of an uncompressed point consists of the byte `0x04` followed
+          # by the x value then the y value.
+          point = OpenSSL::PKey::EC::Point.new(
+            OpenSSL::PKey::EC::Group.new(curve),
+            OpenSSL::BN.new([0x04, x_octets, y_octets].pack('Ca*a*'), 2)
+          )
+
+          key.public_key = point
+          key.private_key = OpenSSL::BN.new(decode_octets(jwk_d), 2) if jwk_d
+
+          key
+        end
+      end
+
+      def decode_octets(jwk_data)
+        ::JWT::Base64.url_decode(jwk_data)
+      end
+
+      def decode_open_ssl_bn(jwk_data)
+        OpenSSL::BN.new(::JWT::Base64.url_decode(jwk_data), BINARY)
+      end
+
       class << self
         def import(jwk_data)
-          # See https://tools.ietf.org/html/rfc7518#section-6.2.1 for an
-          # explanation of the relevant parameters.
-
-          jwk_crv, jwk_x, jwk_y, jwk_d, jwk_kid = jwk_attrs(jwk_data, %i[crv x y d kid])
-          raise JWT::JWKError, 'Key format is invalid for EC' unless jwk_crv && jwk_x && jwk_y
-
-          new(ec_pkey(jwk_crv, jwk_x, jwk_y, jwk_d), kid: jwk_kid)
+          new(jwk_data)
         end
 
         def to_openssl_curve(crv)
@@ -111,87 +229,6 @@ module JWT
           when 'P-256K' then 'secp256k1'
           else raise JWT::JWKError, 'Invalid curve provided'
           end
-        end
-
-        private
-
-        def jwk_attrs(jwk_data, attrs)
-          attrs.map do |attr|
-            jwk_data[attr] || jwk_data[attr.to_s]
-          end
-        end
-
-        if ::JWT.openssl_3?
-          def ec_pkey(jwk_crv, jwk_x, jwk_y, jwk_d) # rubocop:disable Metrics/MethodLength
-            curve = to_openssl_curve(jwk_crv)
-
-            x_octets = decode_octets(jwk_x)
-            y_octets = decode_octets(jwk_y)
-
-            point = OpenSSL::PKey::EC::Point.new(
-              OpenSSL::PKey::EC::Group.new(curve),
-              OpenSSL::BN.new([0x04, x_octets, y_octets].pack('Ca*a*'), 2)
-            )
-
-            sequence = if jwk_d
-              # https://datatracker.ietf.org/doc/html/rfc5915.html
-              # ECPrivateKey ::= SEQUENCE {
-              #   version        INTEGER { ecPrivkeyVer1(1) } (ecPrivkeyVer1),
-              #   privateKey     OCTET STRING,
-              #   parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
-              #   publicKey  [1] BIT STRING OPTIONAL
-              # }
-
-              OpenSSL::ASN1::Sequence([
-                                        OpenSSL::ASN1::Integer(1),
-                                        OpenSSL::ASN1::OctetString(OpenSSL::BN.new(decode_octets(jwk_d), 2).to_s(2)),
-                                        OpenSSL::ASN1::ObjectId(curve, 0, :EXPLICIT),
-                                        OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed), 1, :EXPLICIT)
-                                      ])
-            else
-              OpenSSL::ASN1::Sequence([
-                                        OpenSSL::ASN1::Sequence([OpenSSL::ASN1::ObjectId('id-ecPublicKey'), OpenSSL::ASN1::ObjectId(curve)]),
-                                        OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed))
-                                      ])
-            end
-
-            OpenSSL::PKey::EC.new(sequence.to_der)
-          end
-        else
-          def ec_pkey(jwk_crv, jwk_x, jwk_y, jwk_d)
-            curve = to_openssl_curve(jwk_crv)
-
-            x_octets = decode_octets(jwk_x)
-            y_octets = decode_octets(jwk_y)
-
-            key = OpenSSL::PKey::EC.new(curve)
-
-            # The details of the `Point` instantiation are covered in:
-            # - https://docs.ruby-lang.org/en/2.4.0/OpenSSL/PKey/EC.html
-            # - https://www.openssl.org/docs/manmaster/man3/EC_POINT_new.html
-            # - https://tools.ietf.org/html/rfc5480#section-2.2
-            # - https://www.secg.org/SEC1-Ver-1.0.pdf
-            # Section 2.3.3 of the last of these references specifies that the
-            # encoding of an uncompressed point consists of the byte `0x04` followed
-            # by the x value then the y value.
-            point = OpenSSL::PKey::EC::Point.new(
-              OpenSSL::PKey::EC::Group.new(curve),
-              OpenSSL::BN.new([0x04, x_octets, y_octets].pack('Ca*a*'), 2)
-            )
-
-            key.public_key = point
-            key.private_key = OpenSSL::BN.new(decode_octets(jwk_d), 2) if jwk_d
-
-            key
-          end
-        end
-
-        def decode_octets(jwk_data)
-          ::JWT::Base64.url_decode(jwk_data)
-        end
-
-        def decode_open_ssl_bn(jwk_data)
-          OpenSSL::BN.new(::JWT::Base64.url_decode(jwk_data), BINARY)
         end
       end
     end

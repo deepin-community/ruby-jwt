@@ -1,3 +1,25 @@
+ruby-jwt (2.7.1-1) unstable; urgency=medium
+
+  * Team upload
+  * New upstream version 2.7.1
+
+ -- Lucas Nussbaum <lucas@debian.org>  Wed, 06 Sep 2023 23:09:00 +0200
+
+ruby-jwt (2.7.0-2) unstable; urgency=medium
+
+  * Reupload to unstable
+  * Drop X*-Ruby-Versions fields
+
+ -- Pirate Praveen <praveen@debian.org>  Mon, 12 Jun 2023 17:09:02 +0530
+
+ruby-jwt (2.7.0-1) experimental; urgency=medium
+
+  * New upstream version 2.7.0
+  * Bump Standards-Version to 4.6.2 (no changes needed)
+  * Refresh patches
+
+ -- Pirate Praveen <praveen@debian.org>  Mon, 27 Feb 2023 11:44:24 +0530
+
 ruby-jwt (2.5.0-1) unstable; urgency=medium
 
   * Team upload
