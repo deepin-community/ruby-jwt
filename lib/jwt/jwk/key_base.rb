@@ -2,6 +2,7 @@
 
 module JWT
   module JWK
+    # Base for JWK implementations
     class KeyBase
       def self.inherited(klass)
         super
@@ -38,16 +39,32 @@ module JWT
       end
 
       def ==(other)
-        self[:kid] == other[:kid]
+        other.is_a?(::JWT::JWK::KeyBase) && self[:kid] == other[:kid]
+      end
+
+      def verify(**kwargs)
+        jwa.verify(**kwargs, verification_key: verify_key)
+      end
+
+      def sign(**kwargs)
+        jwa.sign(**kwargs, signing_key: signing_key)
       end
 
       alias eql? ==
 
       def <=>(other)
+        return nil unless other.is_a?(::JWT::JWK::KeyBase)
+
         self[:kid] <=> other[:kid]
       end
 
-      private
+      def jwa
+        raise JWT::JWKError, 'Could not resolve the JWA, the "alg" parameter is missing' unless self[:alg]
+
+        JWA.resolve(self[:alg]).tap do |jwa|
+          raise JWT::JWKError, 'none algorithm usage not supported via JWK' if jwa.is_a?(JWA::None)
+        end
+      end
 
       attr_reader :parameters
     end

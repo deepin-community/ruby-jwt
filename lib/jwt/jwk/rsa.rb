@@ -2,6 +2,7 @@
 
 module JWT
   module JWK
+    # JSON Web Key (JWK) representation of a RSA key
     class RSA < KeyBase # rubocop:disable Metrics/ClassLength
       BINARY = 2
       KTY    = 'RSA'
@@ -50,6 +51,7 @@ module JWT
       def export(options = {})
         exported = parameters.clone
         exported.reject! { |k, _| RSA_PRIVATE_KEY_ELEMENTS.include? k } unless private? && options[:include_private] == true
+
         exported
       end
 
@@ -64,11 +66,9 @@ module JWT
       end
 
       def []=(key, value)
-        if RSA_KEY_ELEMENTS.include?(key.to_sym)
-          raise ArgumentError, 'cannot overwrite cryptographic key attributes'
-        end
+        raise ArgumentError, 'cannot overwrite cryptographic key attributes' if RSA_KEY_ELEMENTS.include?(key.to_sym)
 
-        super(key, value)
+        super
       end
 
       private
@@ -166,6 +166,8 @@ module JWT
           end
         end
 
+        # :nocov:
+        # Before openssl 2.0, we need to use the accessors to set the key
         def create_rsa_key_using_accessors(rsa_parameters) # rubocop:disable Metrics/AbcSize
           validate_rsa_parameters!(rsa_parameters)
 
@@ -180,6 +182,7 @@ module JWT
             rsa_key.iqmp = rsa_parameters[:qi] if rsa_parameters[:qi]
           end
         end
+        # :nocov:
 
         def validate_rsa_parameters!(rsa_parameters)
           return unless rsa_parameters.key?(:d)

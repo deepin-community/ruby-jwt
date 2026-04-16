@@ -4,6 +4,7 @@ require 'forwardable'
 
 module JWT
   module JWK
+    # JWK representation for Elliptic Curve (EC) keys
     class EC < KeyBase # rubocop:disable Metrics/ClassLength
       KTY    = 'EC'
       KTYS   = [KTY, OpenSSL::PKey::EC, JWT::JWK::EC].freeze
@@ -11,6 +12,7 @@ module JWT
       EC_PUBLIC_KEY_ELEMENTS = %i[kty crv x y].freeze
       EC_PRIVATE_KEY_ELEMENTS = %i[d].freeze
       EC_KEY_ELEMENTS = (EC_PRIVATE_KEY_ELEMENTS + EC_PUBLIC_KEY_ELEMENTS).freeze
+      ZERO_BYTE = "\0".b.freeze
 
       def initialize(key, params = nil, options = {})
         params ||= {}
@@ -64,11 +66,16 @@ module JWT
       end
 
       def []=(key, value)
-        if EC_KEY_ELEMENTS.include?(key.to_sym)
-          raise ArgumentError, 'cannot overwrite cryptographic key attributes'
-        end
+        raise ArgumentError, 'cannot overwrite cryptographic key attributes' if EC_KEY_ELEMENTS.include?(key.to_sym)
 
-        super(key, value)
+        super
+      end
+
+      def jwa
+        return super if self[:alg]
+
+        curve_name = self.class.to_openssl_curve(self[:crv])
+        JWA.resolve(JWA::Ecdsa.curve_by_name(curve_name)[:algorithm])
       end
 
       private
@@ -124,10 +131,6 @@ module JWT
         ::JWT::Base64.url_encode(octets)
       end
 
-      def encode_open_ssl_bn(key_part)
-        ::JWT::Base64.url_encode(key_part.to_s(BINARY))
-      end
-
       def parse_ec_key(key)
         crv, x_octets, y_octets = keypair_components(key)
         octets = key.private_key&.to_bn&.to_s(BINARY)
@@ -140,77 +143,78 @@ module JWT
         }.compact
       end
 
+      def create_point(jwk_crv, jwk_x, jwk_y)
+        curve = EC.to_openssl_curve(jwk_crv)
+        x_octets = decode_octets(jwk_x)
+        y_octets = decode_octets(jwk_y)
+
+        # The details of the `Point` instantiation are covered in:
+        # - https://docs.ruby-lang.org/en/2.4.0/OpenSSL/PKey/EC.html
+        # - https://www.openssl.org/docs/manmaster/man3/EC_POINT_new.html
+        # - https://tools.ietf.org/html/rfc5480#section-2.2
+        # - https://www.secg.org/SEC1-Ver-1.0.pdf
+        # Section 2.3.3 of the last of these references specifies that the
+        # encoding of an uncompressed point consists of the byte `0x04` followed
+        # by the x value then the y value.
+        OpenSSL::PKey::EC::Point.new(
+          OpenSSL::PKey::EC::Group.new(curve),
+          OpenSSL::BN.new([0x04, x_octets, y_octets].pack('Ca*a*'), 2)
+        )
+      end
+
       if ::JWT.openssl_3?
-        def create_ec_key(jwk_crv, jwk_x, jwk_y, jwk_d) # rubocop:disable Metrics/MethodLength
-          curve = EC.to_openssl_curve(jwk_crv)
+        def create_ec_key(jwk_crv, jwk_x, jwk_y, jwk_d)
+          point = create_point(jwk_crv, jwk_x, jwk_y)
 
-          x_octets = decode_octets(jwk_x)
-          y_octets = decode_octets(jwk_y)
+          return ::JWT::JWA::Ecdsa.create_public_key_from_point(point) unless jwk_d
 
-          point = OpenSSL::PKey::EC::Point.new(
-            OpenSSL::PKey::EC::Group.new(curve),
-            OpenSSL::BN.new([0x04, x_octets, y_octets].pack('Ca*a*'), 2)
-          )
+          # https://datatracker.ietf.org/doc/html/rfc5915.html
+          # ECPrivateKey ::= SEQUENCE {
+          #   version        INTEGER { ecPrivkeyVer1(1) } (ecPrivkeyVer1),
+          #   privateKey     OCTET STRING,
+          #   parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
+          #   publicKey  [1] BIT STRING OPTIONAL
+          # }
 
-          sequence = if jwk_d
-            # https://datatracker.ietf.org/doc/html/rfc5915.html
-            # ECPrivateKey ::= SEQUENCE {
-            #   version        INTEGER { ecPrivkeyVer1(1) } (ecPrivkeyVer1),
-            #   privateKey     OCTET STRING,
-            #   parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
-            #   publicKey  [1] BIT STRING OPTIONAL
-            # }
-
-            OpenSSL::ASN1::Sequence([
-                                      OpenSSL::ASN1::Integer(1),
-                                      OpenSSL::ASN1::OctetString(OpenSSL::BN.new(decode_octets(jwk_d), 2).to_s(2)),
-                                      OpenSSL::ASN1::ObjectId(curve, 0, :EXPLICIT),
-                                      OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed), 1, :EXPLICIT)
-                                    ])
-          else
-            OpenSSL::ASN1::Sequence([
-                                      OpenSSL::ASN1::Sequence([OpenSSL::ASN1::ObjectId('id-ecPublicKey'), OpenSSL::ASN1::ObjectId(curve)]),
-                                      OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed))
-                                    ])
-          end
-
+          sequence = OpenSSL::ASN1::Sequence([
+                                               OpenSSL::ASN1::Integer(1),
+                                               OpenSSL::ASN1::OctetString(OpenSSL::BN.new(decode_octets(jwk_d), 2).to_s(2)),
+                                               OpenSSL::ASN1::ObjectId(point.group.curve_name, 0, :EXPLICIT),
+                                               OpenSSL::ASN1::BitString(point.to_octet_string(:uncompressed), 1, :EXPLICIT)
+                                             ])
           OpenSSL::PKey::EC.new(sequence.to_der)
         end
       else
         def create_ec_key(jwk_crv, jwk_x, jwk_y, jwk_d)
-          curve = EC.to_openssl_curve(jwk_crv)
+          point = create_point(jwk_crv, jwk_x, jwk_y)
 
-          x_octets = decode_octets(jwk_x)
-          y_octets = decode_octets(jwk_y)
-
-          key = OpenSSL::PKey::EC.new(curve)
-
-          # The details of the `Point` instantiation are covered in:
-          # - https://docs.ruby-lang.org/en/2.4.0/OpenSSL/PKey/EC.html
-          # - https://www.openssl.org/docs/manmaster/man3/EC_POINT_new.html
-          # - https://tools.ietf.org/html/rfc5480#section-2.2
-          # - https://www.secg.org/SEC1-Ver-1.0.pdf
-          # Section 2.3.3 of the last of these references specifies that the
-          # encoding of an uncompressed point consists of the byte `0x04` followed
-          # by the x value then the y value.
-          point = OpenSSL::PKey::EC::Point.new(
-            OpenSSL::PKey::EC::Group.new(curve),
-            OpenSSL::BN.new([0x04, x_octets, y_octets].pack('Ca*a*'), 2)
-          )
-
-          key.public_key = point
-          key.private_key = OpenSSL::BN.new(decode_octets(jwk_d), 2) if jwk_d
-
-          key
+          ::JWT::JWA::Ecdsa.create_public_key_from_point(point).tap do |key|
+            key.private_key = OpenSSL::BN.new(decode_octets(jwk_d), 2) if jwk_d
+          end
         end
       end
 
-      def decode_octets(jwk_data)
-        ::JWT::Base64.url_decode(jwk_data)
-      end
-
-      def decode_open_ssl_bn(jwk_data)
-        OpenSSL::BN.new(::JWT::Base64.url_decode(jwk_data), BINARY)
+      def decode_octets(base64_encoded_coordinate)
+        bytes = ::JWT::Base64.url_decode(base64_encoded_coordinate)
+        # Some base64 encoders on some platform omit a single 0-byte at
+        # the start of either Y or X coordinate of the elliptic curve point.
+        # This leads to an encoding error when data is passed to OpenSSL BN.
+        # It is know to have happened to exported JWKs on a Java application and
+        # on a Flutter/Dart application (both iOS and Android). All that is
+        # needed to fix the problem is adding a leading 0-byte. We know the
+        # required byte is 0 because with any other byte the point is no longer
+        # on the curve - and OpenSSL will actually communicate this via another
+        # exception. The indication of a stripped byte will be the fact that the
+        # coordinates - once decoded into bytes - should always be an even
+        # bytesize. For example, with a P-521 curve, both x and y must be 66 bytes.
+        # With a P-256 curve, both x and y must be 32 and so on. The simplest way
+        # to check for this truncation is thus to check whether the number of bytes
+        # is odd, and restore the leading 0-byte if it is.
+        if bytes.bytesize.odd?
+          ZERO_BYTE + bytes
+        else
+          bytes
+        end
       end
 
       class << self

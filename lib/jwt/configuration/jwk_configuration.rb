@@ -5,6 +5,7 @@ require_relative '../jwk/thumbprint'
 
 module JWT
   module Configuration
+    # @api private
     class JwkConfiguration
       def initialize
         self.kid_generator_type = :key_digest
@@ -18,7 +19,7 @@ module JWT
                                JWT::JWK::Thumbprint
                              else
                                raise ArgumentError, "#{value} is not a valid kid generator type."
-        end
+                             end
       end
 
       attr_accessor :kid_generator
