@@ -1,79 +1,30 @@
 # frozen_string_literal: true
 
-require_relative 'algos'
-require_relative 'claims_validator'
+require_relative 'jwa'
 
-# JWT::Encode module
 module JWT
-  # Encoding logic for JWT
+  # The Encode class is responsible for encoding JWT tokens.
   class Encode
-    ALG_KEY = 'alg'
-
+    # Initializes a new Encode instance.
+    #
+    # @param options [Hash] the options for encoding the JWT token.
+    # @option options [Hash] :payload the payload of the JWT token.
+    # @option options [Hash] :headers the headers of the JWT token.
+    # @option options [String] :key the key used to sign the JWT token.
+    # @option options [String] :algorithm the algorithm used to sign the JWT token.
     def initialize(options)
-      @payload          = options[:payload]
-      @key              = options[:key]
-      @algorithm        = resolve_algorithm(options[:algorithm])
-      @headers          = options[:headers].transform_keys(&:to_s)
-      @headers[ALG_KEY] = @algorithm.alg
+      @token     = Token.new(payload: options[:payload], header: options[:headers])
+      @key       = options[:key]
+      @algorithm = options[:algorithm]
     end
 
+    # Encodes the JWT token and returns its segments.
+    #
+    # @return [String] the encoded JWT token.
     def segments
-      validate_claims!
-      combine(encoded_header_and_payload, encoded_signature)
-    end
-
-    private
-
-    def resolve_algorithm(algorithm)
-      return algorithm if Algos.implementation?(algorithm)
-
-      Algos.create(algorithm)
-    end
-
-    def encoded_header
-      @encoded_header ||= encode_header
-    end
-
-    def encoded_payload
-      @encoded_payload ||= encode_payload
-    end
-
-    def encoded_signature
-      @encoded_signature ||= encode_signature
-    end
-
-    def encoded_header_and_payload
-      @encoded_header_and_payload ||= combine(encoded_header, encoded_payload)
-    end
-
-    def encode_header
-      encode_data(@headers)
-    end
-
-    def encode_payload
-      encode_data(@payload)
-    end
-
-    def signature
-      @algorithm.sign(data: encoded_header_and_payload, signing_key: @key)
-    end
-
-    def validate_claims!
-      return unless @payload.is_a?(Hash)
-
-      ClaimsValidator.new(@payload).validate!
-    end
-
-    def encode_signature
-      ::JWT::Base64.url_encode(signature)
-    end
-
-    def encode_data(data)
-      ::JWT::Base64.url_encode(JWT::JSON.generate(data))
-    end
-
-    def combine(*parts)
-      parts.join('.')
+      @token.verify_claims!(:numeric)
+      @token.sign!(algorithm: @algorithm, key: @key)
+      @token.jwt
     end
   end
 end

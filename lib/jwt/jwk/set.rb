@@ -4,6 +4,8 @@ require 'forwardable'
 
 module JWT
   module JWK
+    # JSON Web Key Set (JWKS) representation
+    # https://tools.ietf.org/html/rfc7517
     class Set
       include Enumerable
       extend Forwardable
@@ -25,7 +27,7 @@ module JWT
                   jwks.map { |k| JWT::JWK.new(k, nil, options) }
                 else
                   raise ArgumentError, 'Can only create new JWKS from Hash, Array and JWK'
-        end
+                end
       end
 
       def export(options = {})

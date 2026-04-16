@@ -31,9 +31,14 @@ Gem::Specification.new do |spec|
   spec.executables = []
   spec.require_paths = %w[lib]
 
+  spec.add_dependency 'base64'
+
   spec.add_development_dependency 'appraisal'
   spec.add_development_dependency 'bundler'
+  spec.add_development_dependency 'irb'
+  spec.add_development_dependency 'logger'
   spec.add_development_dependency 'rake'
   spec.add_development_dependency 'rspec'
+  spec.add_development_dependency 'rubocop'
   spec.add_development_dependency 'simplecov'
 end

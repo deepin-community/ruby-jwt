@@ -29,7 +29,7 @@ RSpec.describe 'README.md code test' do
     end
 
     it 'decodes with HMAC algorithm without secret key' do
-      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if ::JWT.openssl_3_hmac_empty_key_regression?
+      pending 'Different behaviour on OpenSSL 3.0 (https://github.com/openssl/openssl/issues/13089)' if JWT.openssl_3_hmac_empty_key_regression?
       token = JWT.encode payload, nil, 'HS256'
       decoded_token = JWT.decode token, nil, false
 
@@ -65,22 +65,7 @@ RSpec.describe 'README.md code test' do
       ]
     end
 
-    if defined?(RbNaCl)
-      it 'EDDSA' do
-        eddsa_key = RbNaCl::Signatures::Ed25519::SigningKey.generate
-        eddsa_public = eddsa_key.verify_key
-
-        token = JWT.encode payload, eddsa_key, 'ED25519'
-        decoded_token = JWT.decode token, eddsa_public, true, algorithm: 'ED25519'
-
-        expect(decoded_token).to eq [
-          { 'data' => 'test' },
-          { 'alg' => 'ED25519' }
-        ]
-      end
-    end
-
-    if ::Gem::Version.new(OpenSSL::VERSION) >= ::Gem::Version.new('2.1')
+    if Gem::Version.new(OpenSSL::VERSION) >= Gem::Version.new('2.1')
       it 'RSASSA-PSS' do
         rsa_private = OpenSSL::PKey::RSA.generate 2048
         rsa_public = rsa_private.public_key
@@ -239,7 +224,15 @@ RSpec.describe 'README.md code test' do
       token = JWT.encode sub_payload, hmac_secret, 'HS256'
 
       expect do
-        JWT.decode token, hmac_secret, true, 'sub' => sub, :verify_sub => true, :algorithm => 'HS256'
+        JWT.decode token, hmac_secret, true, { sub: sub, verify_sub: true, algorithm: 'HS256' }
+      end.not_to raise_error
+
+      expect do
+        JWT.decode token, hmac_secret, true, { sub: 'sub', verify_sub: true, algorithm: 'HS256' }
+      end.to raise_error(JWT::InvalidSubError)
+
+      expect do
+        JWT.decode token, hmac_secret, true, { 'sub' => 'sub', verify_sub: true, algorithm: 'HS256' }
       end.not_to raise_error
     end
 
@@ -308,7 +301,7 @@ RSpec.describe 'README.md code test' do
         # The jwk loader would fetch the set of JWKs from a trusted source,
         # to avoid malicious invalidations some kind of protection needs to be implemented.
         # This example only allows cache invalidations every 5 minutes.
-        jwk_loader = ->(options) do
+        jwk_loader = lambda do |options|
           if options[:kid_not_found] && @cache_last_update < Time.now.to_i - 300
             logger.info("Invalidating JWK cache. #{options[:kid]} not found from previous cache")
             @cached_keys = nil
@@ -352,7 +345,7 @@ RSpec.describe 'README.md code test' do
 
         token = JWT.encode(payload, jwk.signing_key, 'RS512', headers)
 
-        jwks_loader = ->(options) do
+        jwks_loader = lambda do |options|
           # The jwk loader would fetch the set of JWKs from a trusted source.
           # To avoid malicious requests triggering cache invalidations there needs to be
           # some kind of grace time or other logic for determining the validity of the invalidation.
@@ -414,7 +407,7 @@ RSpec.describe 'README.md code test' do
     end
 
     it 'JWK with thumbprint as kid via type' do
-      JWT.configuration.jwk.kid_generator = ::JWT::JWK::Thumbprint
+      JWT.configuration.jwk.kid_generator = JWT::JWK::Thumbprint
 
       jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048))
 
@@ -424,7 +417,7 @@ RSpec.describe 'README.md code test' do
     end
 
     it 'JWK with thumbprint given in the initializer (legacy)' do
-      jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), kid_generator: ::JWT::JWK::Thumbprint)
+      jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), kid_generator: JWT::JWK::Thumbprint)
 
       jwk_hash = jwk.export
 
@@ -432,7 +425,7 @@ RSpec.describe 'README.md code test' do
     end
 
     it 'JWK with thumbprint given in the initializer' do
-      jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), nil, kid_generator: ::JWT::JWK::Thumbprint)
+      jwk = JWT::JWK.new(OpenSSL::PKey::RSA.new(2048), nil, kid_generator: JWT::JWK::Thumbprint)
 
       jwk_hash = jwk.export
 
@@ -443,16 +436,14 @@ RSpec.describe 'README.md code test' do
   context 'custom algorithm example' do
     it 'allows a module to be used as algorithm on encode and decode' do
       custom_hs512_alg = Module.new do
+        extend JWT::JWA::SigningAlgorithm
+
         def self.alg
           'HS512'
         end
 
-        def self.valid_alg?(alg_to_validate)
-          alg_to_validate == alg
-        end
-
         def self.sign(data:, signing_key:)
-          OpenSSL::HMAC.digest(OpenSSL::Digest.new('sha512'), data, signing_key)
+          OpenSSL::HMAC.digest(OpenSSL::Digest.new('sha512'), signing_key, data)
         end
 
         def self.verify(data:, signature:, verification_key:)
@@ -460,8 +451,31 @@ RSpec.describe 'README.md code test' do
         end
       end
 
-      token = ::JWT.encode({ 'pay' => 'load' }, 'secret', custom_hs512_alg)
-      _payload, _header = ::JWT.decode(token, 'secret', true, algorithm: custom_hs512_alg)
+      token = JWT.encode({ 'pay' => 'load' }, 'secret', custom_hs512_alg)
+      _payload, header = JWT.decode(token, 'secret', true, algorithm: custom_hs512_alg)
+      expect(header).to include('alg' => 'HS512')
+    end
+  end
+
+  context 'JWK to verify a signature' do
+    it 'allows to verify a signature with a JWK' do
+      payload = { exp: Time.now.to_i + 60, jti: '1234', sub: 'my-subject' }
+      header = { kid: 'hmac' }
+
+      jwk_json = '{
+                  "kty": "oct",
+                  "k": "c2VjcmV0",
+                  "alg": "HS256",
+                  "kid": "hmac"
+                  }'
+
+      jwk = JWT::JWK.import(JSON.parse(jwk_json))
+
+      token = JWT::Token.new(payload: payload, header: header)
+      token.sign!(key: jwk, algorithm: 'HS256')
+
+      encoded_token = JWT::EncodedToken.new(token.jwt)
+      expect { encoded_token.verify!(signature: { algorithm: %w[HS256 HS512], key: jwk }) }.not_to raise_error
     end
   end
 end
